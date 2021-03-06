@@ -50,11 +50,17 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
   }
 
   private def nearestTargetByType(cellId: GridCellId, targetType: TargetType)
-                           (implicit config: UrbanConfig): Option[(String, TravelMode)] = {
+                                 (implicit config: UrbanConfig): Option[(String, TravelMode)] = {
     val targetInfo = config.targetTypeToTargets(targetType)
       .minBy(targetInfo => GridCellId.distance(cellId, targetInfo.center.gridId))
     Some(targetInfo.id, TravelMode.Travel)
   }
+
+  private def findCellByTargetId(targetId: String)(implicit config: UrbanConfig): Option[GridCellId]= {
+    config.targets.find(_.id == targetId).map(info => config.getRandomElement(info.entrances))
+      .map(_.gridId)
+  }
+
 
   private def chooseTarget(cellId: GridCellId, targetType: TargetType)
                           (implicit config: UrbanConfig): Option[(String, TravelMode)] = {
@@ -96,17 +102,25 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
           }.map(_._1).get
 
           if (config.random.nextDouble() < config.personBehavior.restrictionFactors(targetType)) {
-            chooseTarget(cellId, targetType).map { case (target, travelMode) =>
-              val person = travelMode match {
-                case TravelMode.Travel =>
-                  Person.travelling(entrance.targetId, target)
-                case TravelMode.Wander =>
-                  Person.wandering(entrance.targetId, target, time)
-                case _ =>
-                  throw new RuntimeException("Attempted to generate returning person")
-              }
+
+            if (targetType == TargetType.Wander) {
+              chooseTarget(cellId, targetType).map { case (target, travelMode) =>
+                val person = travelMode match {
+                  case TravelMode.Travel =>
+                    throw new RuntimeException("Attempted to generate travel person for TargetType.Wander")
+                  case TravelMode.Wander =>
+                    Person.wandering(entrance.targetId, List(target), time)
+                  case _ =>
+                    throw new RuntimeException("Attempted to generate returning person")
+                }
+                (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
+              }.getOrElse(noop)
+            } else {
+              val numberOfTargets = config.random.between(1, 4)
+              val targets = createTravelTarget(cellId, time, numberOfTargets)
+              val person = Person.travelling(entrance.targetId, targets)
               (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
-            }.getOrElse(noop)
+            }
           } else {
             // spawning restriction triggered
             noop
@@ -121,18 +135,43 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
       noop
     }
 
-    val returningPlans = entrance.visitors.map {
+    val leavingPlans = entrance.visitors.map {
       case Visitor(person, returnTime) if time >= returnTime =>
-        val returningPerson = person.returning()
+        val returningPerson = person.leaving()
         (Plans(None -> Plan(CreatePerson(returningPerson, markerRound), RemoveVisitor(entrance.targetId, person.id))), UrbanMetrics.empty)
       case _ =>
         noop
     }
 
-    (returningPlans :+ spawningPlans).reduceOption[(Plans, UrbanMetrics)] {
+    (leavingPlans :+ spawningPlans).reduceOption[(Plans, UrbanMetrics)] {
       case ((firstPlans, firstMetrics), (secondPlans, secondMetrics)) =>
         (firstPlans ++ secondPlans, firstMetrics + secondMetrics)
     }.getOrElse(noop)
+  }
+
+  private def createTravelTarget(cellId: GridCellId, time: Double, n: Int)(implicit config: UrbanConfig): List[String] = {
+    if (n > 0) {
+      val targetOpt = createTravelTarget(cellId, time)
+      targetOpt.map(target => {
+        target :: findCellByTargetId(target).map(createTravelTarget(_,time, n)).getOrElse(Nil)
+      }).getOrElse(Nil)
+    } else {
+      Nil
+    }
+  }
+
+  private def createTravelTarget(cellId: GridCellId, time: Double)
+                                (implicit config: UrbanConfig): Option[String] = {
+    val target = config.getTimeOfDay(time).flatMap { currentTimeOfDay =>
+      val targetDistribution = config.personBehavior.spawnRoutine(currentTimeOfDay).targets.removed(TargetType.Wander)
+      var targetRand = config.random.nextDouble()
+      val targetType = targetDistribution.find { case (_, probability) =>
+        targetRand -= probability / 100d
+        targetRand <= 0
+      }.map(_._1).get
+      chooseTarget(cellId, targetType).map(_._1)
+    }
+    target
   }
 
   private def signalToPercents(signalMap: SignalMap): Map[Direction, Double] = {
@@ -155,7 +194,9 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
 
   private def chooseDirection(optimalDirection: Direction, personId: String, markers: Seq[PersonMarker], allowedDirections: Set[Direction])
                              (implicit config: UrbanConfig): Option[Direction] = {
-    val markerDistancePenalty: PartialFunction[Double, Double] = { case distance => 0.6 - distance * 0.1 }
+    val markerDistancePenalty: PartialFunction[Double, Double] = {
+      case distance => 0.6 - distance * 0.1
+    }
 
     val weighted = directionsWeighted(optimalDirection.asInstanceOf[GridDirection])
       .filter { case (d, _) => allowedDirections.contains(d) }
@@ -200,7 +241,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
             (person.withNewWanderTarget(randomFrom(config.targets).id, time), UrbanMetrics.empty)
           } else {
             // return to source
-            (person.returning(), UrbanMetrics.wanderEnd + UrbanMetrics.returnBeginning)
+            (person.leaving(), UrbanMetrics.wanderEnd + UrbanMetrics.returnBeginning)
           }
         }
       case _ =>
@@ -210,7 +251,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     val historicalDirections = person.decisionHistory.filter(_._1 == cellId).map(_._2)
     val allowedDirections = neighbourContents.filter(_._2.asInstanceOf[UrbanCell].isWalkable).keySet // remove directions to unwalkable cells
     val preferredDirections = allowedDirections.filterNot(historicalDirections.contains) // remove previously taken decisions
-    val staticDirectionOpt = config.staticPaths(updatedPerson.target).get(cellId)
+    val staticDirectionOpt = config.staticPaths(updatedPerson.targets.head).get(cellId)
 
     val plans = staticDirectionOpt.map { staticDirection =>
       val chosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, preferredDirections)
@@ -219,15 +260,15 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
       }.getOrElse {
         val altChosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, allowedDirections)
         altChosenDirectionOpt.map { chosenDirection =>
-          logger.warn(s"Forced to repeat historic move from $cellId to ${updatedPerson.target}: $chosenDirection")
+          logger.warn(s"Forced to repeat historic move from $cellId to ${updatedPerson.targets}: $chosenDirection")
           movePlans(cellId, chosenDirection, updatedPerson, markerRound)
         }.getOrElse {
-          logger.warn(s"Could not choose direction from $cellId to ${updatedPerson.target}")
+          logger.warn(s"Could not choose direction from $cellId to ${updatedPerson.targets}")
           Plans(None -> Plan(KeepPerson(updatedPerson, markerRound)))
         }
       }
     }.getOrElse {
-      logger.warn(s"No static direction available from $cellId to ${updatedPerson.target}")
+      logger.warn(s"No static direction available from $cellId to ${updatedPerson.targets}")
       Plans(None -> Plan(KeepPerson(updatedPerson, markerRound)))
     }
 
@@ -240,11 +281,11 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     val metrics = contents.occupants.map {
       person =>
         val violatedMarkers = contents.markers.filter(_.personId != person.id)
-        if (violatedMarkers.isEmpty){
+        if (violatedMarkers.isEmpty) {
           UrbanMetrics.empty
         } else if (violatedMarkers.exists(_.distance <= config.closeViolationThreshold)) {
           UrbanMetrics.closeViolation(cellId)
-        } else  if (violatedMarkers.exists(_.distance <= config.personalSpaceDetection)) {
+        } else if (violatedMarkers.exists(_.distance <= config.personalSpaceDetection)) {
           UrbanMetrics.farViolation(cellId)
         } else {
           UrbanMetrics.empty

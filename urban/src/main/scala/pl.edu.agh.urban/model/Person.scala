@@ -8,7 +8,7 @@ import pl.edu.agh.xinuk.model.{CellId, Direction}
 
 case class Person(
                    source: String,
-                   target: String,
+                   targets: List[String],
                    travelMode: TravelMode,
                    wanderingSegmentEndTime: Double = 0d,
                    wanderingSegmentsRemaining: Long = 0L,
@@ -22,10 +22,11 @@ case class Person(
     val shrunkHistory = decisionHistory.drop(decisionHistory.size + 1 - config.personMemorySize)
     copy(decisionHistory = shrunkHistory :+ (cellId, direction))
   }
+  def hasAnyTargetsOtherThanSource(): Boolean = targets.size > 1
 
   def withNewWanderTarget(target: String, time: Double)(implicit config: UrbanConfig): Person = {
     copy(
-      target = target,
+      targets = target :: source :: Nil,
       travelMode = TravelMode.Wander,
       wanderingSegmentEndTime = time + config.randomSegmentDuration(),
       wanderingSegmentsRemaining = wanderingSegmentsRemaining - 1,
@@ -33,10 +34,10 @@ case class Person(
     )
   }
 
-  def returning(): Person = {
+  def leaving(): Person = {
     copy(
-      target = source,
-      travelMode = TravelMode.Return,
+      targets = targets.tail,
+      travelMode =  if (targets.tail.size == 1) TravelMode.Return else travelMode,
       wanderingSegmentEndTime = 0,
       wanderingSegmentsRemaining = 0,
       decisionHistory = Seq.empty
@@ -45,11 +46,11 @@ case class Person(
 }
 
 object Person {
-  def travelling(source: String, target: String)(implicit config: UrbanConfig): Person =
-    Person(source, target, TravelMode.Travel)
+  def travelling(source: String, targets: List[String])(implicit config: UrbanConfig): Person =
+    Person(source, targets, TravelMode.Travel)
 
-  def wandering(source: String, target: String, time: Double)(implicit config: UrbanConfig): Person = {
-    Person(source, target, TravelMode.Wander, time + config.randomSegmentDuration(), config.randomSegments() - 1)
+  def wandering(source: String, targets: List[String], time: Double)(implicit config: UrbanConfig): Person = {
+    Person(source, targets, TravelMode.Wander, time + config.randomSegmentDuration(), config.randomSegments() - 1)
   }
 }
 
@@ -61,6 +62,9 @@ case class PersonMarker(personId: String, round: Long, distance: Double = 0d, so
   }
 }
 
+sealed trait PathSegment
+case class TravelPathSegment(targetId: String, mode: TravelMode)
+case class WanderPathSegment(targetId: String, mode: TravelMode, time: Double)
 sealed trait TravelMode
 
 object TravelMode {

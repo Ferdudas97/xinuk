@@ -5,6 +5,7 @@ import pl.edu.agh.xinuk.model.grid.GridCellId
 
 final case class UrbanMetrics(
                                travelBeginnings: Long,
+                               travelSegmentVisited: Long,
                                travelEnds: Long,
                                wanderBeginnings: Long,
                                wanderEnds: Long,
@@ -27,15 +28,17 @@ final case class UrbanMetrics(
   override def series: Vector[(String, Double)] = Vector(
     "People entering area" -> (travelBeginnings + wanderBeginnings + returnBeginnings).toDouble,
     "People exiting area" -> (travelEnds + wanderEnds + returnEnds).toDouble,
+    "Visited places" -> travelSegmentVisited,
     "Social distance close violations" -> closeViolationCount.toDouble,
     "Social distance far violations" -> farViolationCount.toDouble
   )
 
   override def +(other: Metrics): UrbanMetrics = other match {
     case UrbanMetrics.Empty => this
-    case UrbanMetrics(otherTravelBeginnings, otherTravelEnds, otherWanderBeginnings, otherWanderEnds, otherReturnBeginnings, otherReturnEnds,
+    case UrbanMetrics(otherTravelBeginnings, otherTravelsSegments, otherTravelEnds, otherWanderBeginnings, otherWanderEnds, otherReturnBeginnings, otherReturnEnds,
     otherCloseViolationCount, otherFarViolationCount, otherCloseViolationLocations, otherFarViolationLocations) =>
       UrbanMetrics(travelBeginnings + otherTravelBeginnings,
+        travelSegmentVisited + otherTravelsSegments,
         travelEnds + otherTravelEnds,
         wanderBeginnings + otherWanderBeginnings,
         wanderEnds + otherWanderEnds,
@@ -52,6 +55,7 @@ final case class UrbanMetrics(
 object UrbanMetrics {
   val MetricHeaders = Vector(
     "travelBeginnings",
+    "travelSegmentVisited",
     "travelEnds",
     "wanderBeginnings",
     "wanderEnds",
@@ -63,19 +67,22 @@ object UrbanMetrics {
     "farViolationLocations"
   )
 
-  private val Empty = UrbanMetrics(0, 0, 0, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
-  private val TravelBeginning = UrbanMetrics(1, 0, 0, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
-  private val TravelEnd = UrbanMetrics(0, 1, 0, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
-  private val WanderBeginning = UrbanMetrics(0, 0, 1, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
-  private val WanderEnd = UrbanMetrics(0, 0, 0, 1, 0, 0, 0, 0, Seq.empty, Seq.empty)
-  private val ReturnBeginning = UrbanMetrics(0, 0, 0, 0, 1, 0, 0, 0, Seq.empty, Seq.empty)
-  private val ReturnEnd = UrbanMetrics(0, 0, 0, 0, 0, 1, 0, 0, Seq.empty, Seq.empty)
+  private val Empty = UrbanMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
+  private val TravelBeginning = UrbanMetrics(1, 0, 0, 0, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
+  private val TravelEnd = UrbanMetrics(0, 0, 1, 0, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
+  private val WanderBeginning = UrbanMetrics(0, 0, 0, 1, 0, 0, 0, 0, 0, Seq.empty, Seq.empty)
+  private val WanderEnd = UrbanMetrics(0, 0, 0, 0, 1, 0, 0, 0, 0, Seq.empty, Seq.empty)
+  private val ReturnBeginning = UrbanMetrics(0, 0, 0, 0, 0, 1, 0, 0, 0, Seq.empty, Seq.empty)
+  private val ReturnEnd = UrbanMetrics(0, 0, 0, 0, 0, 0, 1, 0, 0, Seq.empty, Seq.empty)
+  private val TravelSegmentVisited = UrbanMetrics(0, 1, 0, 0, 0, 0, 0, 1, 0, Seq.empty, Seq.empty)
 
   def empty: UrbanMetrics = Empty
 
   def travelBeginning: UrbanMetrics = TravelBeginning
 
   def travelEnd: UrbanMetrics = TravelEnd
+
+  def travelSegmentVisited: UrbanMetrics = TravelSegmentVisited
 
   def wanderBeginning: UrbanMetrics = WanderBeginning
 
@@ -85,7 +92,8 @@ object UrbanMetrics {
 
   def returnEnd: UrbanMetrics = ReturnEnd
 
-  def closeViolation(location: GridCellId): UrbanMetrics = UrbanMetrics(0, 0, 0, 0, 0, 0, 1, 0, Seq(location), Seq.empty)
 
-  def farViolation(location: GridCellId): UrbanMetrics = UrbanMetrics(0, 0, 0, 0, 0, 0, 0, 1, Seq.empty, Seq(location))
+  def closeViolation(location: GridCellId): UrbanMetrics = UrbanMetrics(0, 1, 0, 0, 0, 0, 0, 1, 0, Seq(location), Seq.empty)
+
+  def farViolation(location: GridCellId): UrbanMetrics = UrbanMetrics(0, 1, 0, 0, 0, 0, 0, 0, 1, Seq.empty, Seq(location))
 }

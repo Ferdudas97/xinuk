@@ -119,6 +119,7 @@ final case class UrbanConfig(
 
   def randomSegments(): Long = wanderSegmentsMean + random.nextLong(wanderSegmentsSpread * 2 + 1) - wanderSegmentsSpread
 
+  def getRandomElement[A](seq: Seq[A]): A = seq(random.nextInt(seq.length))
   def randomVisitTime(targetType: TargetType): Double = {
     val durationDistribution = personBehavior.visitingRoutine(targetType)
     durationDistribution.mean + random.nextGaussian() * durationDistribution.std

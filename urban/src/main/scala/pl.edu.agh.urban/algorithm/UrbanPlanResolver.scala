@@ -100,12 +100,16 @@ final case class UrbanPlanResolver() extends PlanResolver[UrbanConfig] {
 
   private def handleIncomingPerson(iteration: Long, cell: UrbanCell, person: Person, markerRound: Long)
                                   (implicit config: UrbanConfig): (CellContents, UrbanMetrics) = {
-    cell.entrances.find(_.targetId == person.target).map { entrance =>
+    cell.entrances.find(entrance => person.targets.contains(entrance.targetId)).map { entrance =>
       person.travelMode match {
         case TravelMode.Travel =>
           // person arrived at destination and is visiting
           val timeState = config.getTimeState(iteration)
-          (addVisitor(timeState.time, cell, entrance, person), UrbanMetrics.travelEnd)
+          if (person.hasAnyTargetsOtherThanSource()) {
+            (addVisitor(timeState.time, cell, entrance, person), UrbanMetrics.travelSegmentVisited)
+          } else  {
+            (addVisitor(timeState.time, cell, entrance, person), UrbanMetrics.travelEnd)
+          }
         case TravelMode.Return =>
           // person returned to source
           (cell, UrbanMetrics.returnEnd)
