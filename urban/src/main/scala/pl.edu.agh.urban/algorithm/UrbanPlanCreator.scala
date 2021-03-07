@@ -61,7 +61,6 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
       .map(_.gridId)
   }
 
-
   private def chooseTarget(cellId: GridCellId, targetType: TargetType)
                           (implicit config: UrbanConfig): Option[(String, TravelMode)] = {
     targetType match {
@@ -118,8 +117,12 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
             } else {
               val numberOfTargets = config.random.between(1, 4) // it could be in configuration.
               val targets = createTravelTarget(cellId, time, numberOfTargets)
-              val person = Person.travelling(entrance.targetId, targets)
-              (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
+              if (targets.isEmpty) {
+                noop
+              } else {
+                val person = Person.travelling(entrance.targetId, targets)
+                (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
+              }
             }
           } else {
             // spawning restriction triggered
@@ -262,8 +265,8 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
 
     val historicalDirections = person.decisionHistory.filter(_._1 == cellId).map(_._2)
     val allowedNeighbours = neighbourContents.filter(_._2.asInstanceOf[UrbanCell].isWalkable)// remove directions to unwalkable cells
-    val preferredNeighbours = allowedNeighbours.filterNot(it => historicalDirections.contains(it._1)) // remove previously taken decisions
-    val staticDirectionOpt = config.staticPaths(updatedPerson.targets.head).get(cellId)
+    val preferredNeighbours = allowedNeighbours.filterNot(it => historicalDirections.contains(it._1))// remove previously taken decisions
+    val staticDirectionOpt = updatedPerson.targets.headOption.map(config.staticPaths).flatMap(_.get(cellId))
 
     val plans = staticDirectionOpt.map { staticDirection =>
       val chosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, preferredNeighbours)

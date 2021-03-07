@@ -22,11 +22,11 @@ case class Person(
     val shrunkHistory = decisionHistory.drop(decisionHistory.size + 1 - config.personMemorySize)
     copy(decisionHistory = shrunkHistory :+ (cellId, direction))
   }
-  def hasAnyTargetsOtherThanSource(): Boolean = targets.size > 1
+  def hasAnyTargetsOtherThanSource(): Boolean = !(targets.size == 1 && targets.contains(source))
 
   def withNewWanderTarget(target: String, time: Double)(implicit config: UrbanConfig): Person = {
     copy(
-      targets = target :: source :: Nil,
+      targets = List(target),
       travelMode = TravelMode.Wander,
       wanderingSegmentEndTime = time + config.randomSegmentDuration(),
       wanderingSegmentsRemaining = wanderingSegmentsRemaining - 1,
@@ -36,8 +36,8 @@ case class Person(
 
   def leaving(): Person = {
     copy(
-      targets = targets.tail,
-      travelMode =  if (targets.tail.size == 1) TravelMode.Return else travelMode,
+      targets = if (this.targets.size <= 1) List(source) else targets.tail,
+      travelMode = if (this.targets.size <= 1) TravelMode.Return else travelMode,
       wanderingSegmentEndTime = 0,
       wanderingSegmentsRemaining = 0,
       decisionHistory = Seq.empty
@@ -62,9 +62,6 @@ case class PersonMarker(personId: String, round: Long, distance: Double = 0d, so
   }
 }
 
-sealed trait PathSegment
-case class TravelPathSegment(targetId: String, mode: TravelMode)
-case class WanderPathSegment(targetId: String, mode: TravelMode, time: Double)
 sealed trait TravelMode
 
 object TravelMode {
