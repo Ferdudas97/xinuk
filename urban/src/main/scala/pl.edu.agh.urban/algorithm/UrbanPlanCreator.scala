@@ -2,7 +2,7 @@ package pl.edu.agh.urban.algorithm
 
 import com.typesafe.scalalogging.LazyLogging
 import pl.edu.agh.urban.algorithm.UrbanUpdate._
-import pl.edu.agh.urban.config.{Serialization, TargetType, UrbanConfig}
+import pl.edu.agh.urban.config.{Serialization, TargetType, TileType, TileTypeId, UrbanConfig}
 import pl.edu.agh.urban.model._
 import pl.edu.agh.xinuk.algorithm.{Plan, PlanCreator, Plans}
 import pl.edu.agh.xinuk.model._
@@ -16,11 +16,11 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     if (config.pathCreation != "None") {
       noop
     } else {
-      move(iteration, cellId.asInstanceOf[GridCellId], cellState.signalMap, cellState.contents.asInstanceOf[UrbanCell], neighbourContents)
+      move(iteration, cellId.asInstanceOf[GridCellId], cellState.contents.asInstanceOf[UrbanCell], neighbourContents.asInstanceOf[Map[Direction, UrbanCell]])
     }
   }
 
-  private def move(iteration: Long, cellId: GridCellId, signalMap: SignalMap, contents: UrbanCell, neighbourContents: Map[Direction, CellContents])
+  private def move(iteration: Long, cellId: GridCellId, contents: UrbanCell, neighbourContents: Map[Direction, UrbanCell])
                   (implicit config: UrbanConfig): (Plans, UrbanMetrics) = {
     val timeState = config.getTimeState(iteration)
 
@@ -99,7 +99,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
           val targetType = targetDistribution.find { case (_, probability) =>
             targetRand -= probability / 100d
             targetRand <= 0
-          }.map(_._1).get
+          }.map(_._1).getOrElse(config.getRandomElement(targetDistribution.keySet.toSeq))
 
           if (config.random.nextDouble() < config.personBehavior.restrictionFactors(targetType)) {
 
@@ -116,7 +116,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
                 (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
               }.getOrElse(noop)
             } else {
-              val numberOfTargets = config.random.between(1, 4)
+              val numberOfTargets = config.random.between(1, 4) // it could be in configuration.
               val targets = createTravelTarget(cellId, time, numberOfTargets)
               val person = Person.travelling(entrance.targetId, targets)
               (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
@@ -153,7 +153,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     if (n > 0) {
       val targetOpt = createTravelTarget(cellId, time)
       targetOpt.map(target => {
-        target :: findCellByTargetId(target).map(createTravelTarget(_,time, n)).getOrElse(Nil)
+        target :: findCellByTargetId(target).map(createTravelTarget(_,time, n -1)).getOrElse(Nil)
       }).getOrElse(Nil)
     } else {
       Nil
@@ -168,7 +168,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
       val targetType = targetDistribution.find { case (_, probability) =>
         targetRand -= probability / 100d
         targetRand <= 0
-      }.map(_._1).get
+      }.map(_._1).getOrElse(config.getRandomElement(targetDistribution.keySet.toSeq))
       chooseTarget(cellId, targetType).map(_._1)
     }
     target
@@ -192,10 +192,14 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     weightedDirections(startingDirection)
   }
 
-  private def chooseDirection(optimalDirection: Direction, personId: String, markers: Seq[PersonMarker], allowedDirections: Set[Direction])
+  private def chooseDirection(optimalDirection: Direction, personId: String, markers: Seq[PersonMarker], allowedCells: Map[Direction, UrbanCell])
                              (implicit config: UrbanConfig): Option[Direction] = {
+    val allowedDirections = allowedCells.keySet
     val markerDistancePenalty: PartialFunction[Double, Double] = {
       case distance => 0.6 - distance * 0.1
+    }
+    val groupingFactor: PartialFunction[Direction, Double] = {
+      case direction => allowedCells.get(direction).map(it => groupingFactorForCell(it)).getOrElse(1.0)
     }
 
     val weighted = directionsWeighted(optimalDirection.asInstanceOf[GridDirection])
@@ -209,12 +213,20 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     } else {
       val markerSourceDirections = markers
         .filterNot(_.personId == personId)
-        .flatMap(marker => marker.sourceDirections.map(direction => (direction, markerDistancePenalty(marker.distance))))
+        .flatMap(marker => marker.sourceDirections.map(direction => (direction,
+          markerDistancePenalty(marker.distance) * groupingFactor(direction))))
         .filter { case (direction, _) => allowedDirections.contains(direction) }
         .toMap
 
       val finalScoring = weighted.keySet.map(d => d -> (weighted.getOrElse(d, 0d) - markerSourceDirections.getOrElse(d, 0d)))
       Some(finalScoring.maxBy(_._2)._1)
+    }
+  }
+  //decreasing factor of marker based on tileType
+  private def groupingFactorForCell(urbanCell: UrbanCell) : Double = {
+    urbanCell.tileType.id match {
+      case TileTypeId.Crossing | TileTypeId.Stop => 0.8 //maybe it should be configured in config
+      case _ => 1.0
     }
   }
 
@@ -228,7 +240,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
   }
 
   private def handlePerson(cellId: GridCellId, person: Person, time: Double, markerRound: Long, markers: Seq[PersonMarker],
-                           neighbourContents: Map[Direction, CellContents])
+                           neighbourContents: Map[Direction, UrbanCell])
                           (implicit config: UrbanConfig): (Plans, UrbanMetrics) = {
     val (updatedPerson, metrics) = person.travelMode match {
       case TravelMode.Wander =>
@@ -249,16 +261,16 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
     }
 
     val historicalDirections = person.decisionHistory.filter(_._1 == cellId).map(_._2)
-    val allowedDirections = neighbourContents.filter(_._2.asInstanceOf[UrbanCell].isWalkable).keySet // remove directions to unwalkable cells
-    val preferredDirections = allowedDirections.filterNot(historicalDirections.contains) // remove previously taken decisions
+    val allowedNeighbours = neighbourContents.filter(_._2.asInstanceOf[UrbanCell].isWalkable)// remove directions to unwalkable cells
+    val preferredNeighbours = allowedNeighbours.filterNot(it => historicalDirections.contains(it._1)) // remove previously taken decisions
     val staticDirectionOpt = config.staticPaths(updatedPerson.targets.head).get(cellId)
 
     val plans = staticDirectionOpt.map { staticDirection =>
-      val chosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, preferredDirections)
+      val chosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, preferredNeighbours)
       chosenDirectionOpt.map { chosenDirection =>
         movePlans(cellId, chosenDirection, updatedPerson, markerRound)
       }.getOrElse {
-        val altChosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, allowedDirections)
+        val altChosenDirectionOpt = chooseDirection(staticDirection, updatedPerson.id, markers, allowedNeighbours)
         altChosenDirectionOpt.map { chosenDirection =>
           logger.warn(s"Forced to repeat historic move from $cellId to ${updatedPerson.targets}: $chosenDirection")
           movePlans(cellId, chosenDirection, updatedPerson, markerRound)

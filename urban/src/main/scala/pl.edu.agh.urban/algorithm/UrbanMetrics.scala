@@ -28,7 +28,7 @@ final case class UrbanMetrics(
   override def series: Vector[(String, Double)] = Vector(
     "People entering area" -> (travelBeginnings + wanderBeginnings + returnBeginnings).toDouble,
     "People exiting area" -> (travelEnds + wanderEnds + returnEnds).toDouble,
-    "Visited places" -> travelSegmentVisited,
+    "Visited places" -> travelSegmentVisited.toDouble,
     "Social distance close violations" -> closeViolationCount.toDouble,
     "Social distance far violations" -> farViolationCount.toDouble
   )
