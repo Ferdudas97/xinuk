@@ -115,7 +115,7 @@ final case class UrbanPlanCreator() extends PlanCreator[UrbanConfig] with LazyLo
                 (Plans(None -> Plan(CreatePerson(person, markerRound))), UrbanMetrics.empty)
               }.getOrElse(noop)
             } else {
-              val numberOfTargets = config.random.between(1, 4) // it could be in configuration.
+              val numberOfTargets = Math.max(1,config.randomVisitTime(currentTimeOfDay))// it could be in configuration.
               val targets = createTravelTarget(cellId, time, numberOfTargets)
               if (targets.isEmpty) {
                 noop

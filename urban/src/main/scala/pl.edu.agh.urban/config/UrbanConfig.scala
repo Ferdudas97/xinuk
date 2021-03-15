@@ -124,6 +124,12 @@ final case class UrbanConfig(
     val durationDistribution = personBehavior.visitingRoutine(targetType)
     durationDistribution.mean + random.nextGaussian() * durationDistribution.std
   }
+
+  def randomVisitTime(timeOfDay: TimeOfDay): Int = {
+    val durationDistribution = personBehavior.numberOfTargetsRoutine(timeOfDay)
+    val randomDouble = durationDistribution.mean + random.nextGaussian() * durationDistribution.std
+    randomDouble.toInt
+  }
 }
 
 object UrbanConfig {
@@ -167,6 +173,7 @@ case class Coordinates(x: Int, y: Int) {
 case class TileType(id: TileTypeId,
                     name: String,
                     color: Color,
+                    groupingFactor: Double = 1.0,
                     walkingFactor: Double)
 
 case class TargetInfo(id: String,
@@ -176,7 +183,8 @@ case class TargetInfo(id: String,
                       entrances: Seq[Coordinates])
 
 case class PersonBehavior(spawnRoutine: Map[TimeOfDay, HumanSpawnProfile],
-                          visitingRoutine: Map[TargetType, DurationDistribution],
+                          visitingRoutine: Map[TargetType, TargetsDistribution],
+                          numberOfTargetsRoutine: Map[TimeOfDay, DurationDistribution],
                           restrictionFactors: Map[TargetType, Double])
 
 case class HumanSpawnProfile(beginning: LocalTime,
@@ -184,6 +192,9 @@ case class HumanSpawnProfile(beginning: LocalTime,
                              departurePercent: Double,
                              returnPercent: Double,
                              targets: Map[TargetType, Double])
+
+case class TargetsDistribution(mean: Double,
+                                std: Double)
 
 case class DurationDistribution(mean: Double,
                                 std: Double)
